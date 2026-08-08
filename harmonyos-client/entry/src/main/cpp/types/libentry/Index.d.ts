@@ -1,0 +1,14 @@
+export const start: (dataDir: string, tcpPort: number, deviceName: string) => boolean;
+export const stop: () => void;
+export const addFile: (path: string) => boolean;
+export const removeFile: (fileId: string) => boolean;
+export const requestPair: (deviceId: string) => boolean;
+export const pairDevice: (deviceId: string, accept: boolean) => boolean;
+export const removeDevice: (deviceId: string) => boolean;
+export const connectByIp: (ip: string, port: number) => boolean;
+export const onEvent: (cb: (json: string) => void) => void;
+export const getFileListJson: () => string;
+export const getDevicesJson: () => string;
+export const getSettingsJson: () => string;
+export const saveSettingsJson: (json: string) => void;
+export const rescan: () => boolean;

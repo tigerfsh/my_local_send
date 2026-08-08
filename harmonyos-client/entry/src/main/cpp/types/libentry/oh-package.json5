@@ -1,0 +1,7 @@
+{
+  "name": "libentry.so",
+  "version": "1.0.0",
+  "description": "localsend NAPI 桥接模块",
+  "main": "Index.d.ts",
+  "types": "./Index.d.ts"
+}

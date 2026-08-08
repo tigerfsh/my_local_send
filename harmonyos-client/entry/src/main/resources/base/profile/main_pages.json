@@ -1,0 +1,10 @@
+{
+  "src": [
+    "pages/HomePage",
+    "pages/FloatingBarPage",
+    "pages/FloatingPanelPage",
+    "pages/PreviewPage",
+    "pages/SettingsPage",
+    "pages/DeviceManagerPage"
+  ]
+}

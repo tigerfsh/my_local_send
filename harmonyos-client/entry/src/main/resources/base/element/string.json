@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "跨局域网本地文件中转站悬浮工具"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "文件中转站主入口"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "中转站"
+    },
+    {
+      "name": "float_window_permission_reason",
+      "value": "用于在桌面显示文件中转站悬浮窗"
+    }
+  ]
+}

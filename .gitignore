@@ -1,0 +1,50 @@
+# ===== 构建产物 =====
+
+# CMake / 顶层构建（SDK 静态库、Ubuntu 客户端、测试均在 build/ 下）
+build/
+
+# Ubuntu/Qt 其他常见构建目录
+build-*/
+*.user
+
+# 编译中间产物（防御性）
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+
+# ===== HarmonyOS / DevEco Studio =====
+
+# hvigor 构建缓存
+.hvigor/
+entry/.hvigor/
+
+# 依赖模块（由 DevEco 通过 ohpm 拉取）
+oh_modules/
+entry/oh_modules/
+
+# 编译产物
+entry/build/
+entry/.cxx/
+entry/.preview/
+
+# DevEco Studio（IntelliJ 系）工程级配置
+.idea/
+
+# ===== IDE / 系统 =====
+
+# Trae IDE 私有目录（计划文档、规则缓存等本地状态）
+.trae/
+
+# macOS
+.DS_Store
+
+# ===== 日志 / 临时文件 =====
+
+*.log
+*.tmp
+*.swp
+
+# ===== 运行时数据（SDK 默认数据目录，双实例联调时也落在此处）=====
+localsend-data/
