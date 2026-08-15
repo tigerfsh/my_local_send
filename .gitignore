@@ -18,16 +18,30 @@ build-*/
 
 # hvigor 构建缓存
 .hvigor/
-entry/.hvigor/
+harmonyos-client/.hvigor/
 
 # 依赖模块（由 DevEco 通过 ohpm 拉取）
 oh_modules/
-entry/oh_modules/
+harmonyos-client/oh_modules/
 
 # 编译产物
-entry/build/
-entry/.cxx/
-entry/.preview/
+harmonyos-client/entry/build/
+harmonyos-client/entry/.cxx/
+harmonyos-client/entry/.preview/
+
+# 命令行构建的本地缓存 / SDK 路径 / 三方源码与交叉编译产物
+harmonyos-client/.npm-cache/
+harmonyos-client/.cache/
+harmonyos-client/.pnpm-home/
+harmonyos-client/local.properties
+harmonyos-client/third_party/
+
+# 本地 debug 签名材料（含私钥）与签名产物
+harmonyos-client/sign/
+
+# 但保留交叉编译进工程的 OpenSSL 静态库（构建必需，勿忽略）
+!harmonyos-client/entry/src/main/cpp/openssl/lib/libcrypto.a
+!harmonyos-client/entry/src/main/cpp/openssl/lib/libssl.a
 
 # DevEco Studio（IntelliJ 系）工程级配置
 .idea/

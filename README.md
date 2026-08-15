@@ -344,7 +344,7 @@
 |---|---|
 | 共享 SDK（本机构建） | cmake ≥ 3.20、g++（C++17）、OpenSSL、SQLite3 开发头文件 |
 | Ubuntu 客户端 | Qt6（Core/Gui/Qml/Quick/QuickControls2/Multimedia）及 QML 模块 |
-| HarmonyOS 客户端 | DevEco Studio + HarmonyOS SDK 5.0.0(12)+（工程源码交付，需在该环境构建） |
+| HarmonyOS 客户端 | DevEco Studio 6.1.1 + HarmonyOS SDK 6.1.1(24)（工程源码交付，需在该环境构建） |
 
 Ubuntu 依赖安装：
 

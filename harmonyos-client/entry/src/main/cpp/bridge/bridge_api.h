@@ -21,6 +21,11 @@ napi_value GetFileListJson(napi_env env, napi_callback_info info);
 napi_value GetDevicesJson(napi_env env, napi_callback_info info);
 napi_value GetSettingsJson(napi_env env, napi_callback_info info);
 napi_value SaveSettingsJson(napi_env env, napi_callback_info info);
+napi_value GetPinned(napi_env env, napi_callback_info info);
+napi_value SetPinned(napi_env env, napi_callback_info info);
+napi_value GetCacheDir(napi_env env, napi_callback_info info);
+napi_value SetCacheDir(napi_env env, napi_callback_info info);
+napi_value ReadTextFile(napi_env env, napi_callback_info info);
 
 // bridge_transport.cpp
 napi_value Rescan(napi_env env, napi_callback_info info);

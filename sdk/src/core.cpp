@@ -3,6 +3,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <chrono>
@@ -62,6 +63,27 @@ std::string generateDeviceId() {
   return Crypto::md5(reinterpret_cast<const uint8_t*>(seed.data()), seed.size());
 }
 
+// Load the persisted device id, or generate and persist a new one. Keeps the
+// identity stable across restarts so the trusted-device whitelist survives.
+std::string loadOrCreateDeviceId(const std::string& dataDir) {
+  std::error_code ec;
+  fs::create_directories(dataDir, ec);
+  std::string path = dataDir + "/device_id";
+  std::ifstream in(path);
+  std::string id;
+  if (in) {
+    std::getline(in, id);
+    while (!id.empty() && (id.back() == '\r' || id.back() == '\n' || id.back() == ' ' || id.back() == '\t')) {
+      id.pop_back();
+    }
+  }
+  if (!id.empty()) return id;
+  id = generateDeviceId();
+  std::ofstream out(path, std::ios::trunc);
+  if (out) out << id << "\n";
+  return id;
+}
+
 json::Value fileInfoToJson(const FileInfo& f) {
   json::Value v = json::Value::object();
   v.set("fileId", f.fileId);
@@ -86,14 +108,51 @@ FileInfo fileInfoFromJson(const json::Value& v) {
   return f;
 }
 
-void deriveChunkIv(const std::string& md5Hex, size_t chunkIndex, std::vector<uint8_t>& iv) {
-  iv.assign(12, 0);
-  for (size_t i = 0; i < 4 && i < md5Hex.size(); ++i) {
-    iv[i] = static_cast<uint8_t>(md5Hex[i]);
+// Portable UTC struct -> epoch seconds (timegm is a GNU/BSD extension).
+int64_t timegmPortable(std::tm* tm) {
+  auto daysFromCivil = [](int y, unsigned m, unsigned d) -> int64_t {
+    y -= m <= 2;
+    const int64_t era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = static_cast<unsigned>(y - era * 400);            // [0, 399]
+    const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1; // [0, 365]
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;          // [0, 146096]
+    return era * 146097 + static_cast<int64_t>(doe) - 719468;
+  };
+  int64_t days = daysFromCivil(tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday);
+  return days * 86400 + tm->tm_hour * 3600 + tm->tm_min * 60 + tm->tm_sec;
+}
+
+json::Value stripSig(const json::Value& v) {
+  json::Value out = json::Value::object();
+  for (const auto& kv : v.asObject()) {
+    if (kv.first != "sig") out.set(kv.first, kv.second);
   }
-  for (int i = 0; i < 8; ++i) {
-    iv[4 + i] = static_cast<uint8_t>((chunkIndex >> (8 * i)) & 0xFF);
-  }
+  return out;
+}
+
+// Verify that `headerJson` carries a valid RSA signature over its own canonical
+// body (the header minus the "sig" field) produced by the holder of `publicKeyPem`.
+bool verifySignedHeader(const std::string& headerJson, const std::string& publicKeyPem) {
+  if (publicKeyPem.empty()) return false;
+  json::Value v = json::Value::parse(headerJson);
+  std::string sigB64 = v["sig"].asString();
+  if (sigB64.empty()) return false;
+  std::vector<uint8_t> sig = Crypto::fromBase64(sigB64);
+  if (sig.empty()) return false;
+  std::string body = stripSig(v).dump();
+  std::vector<uint8_t> data(body.begin(), body.end());
+  return Crypto::rsaVerify(publicKeyPem, data, sig);
+}
+
+// Serialize `v`, sign it with our private key, and return JSON that includes "sig".
+std::string signJson(const json::Value& v, const std::string& privateKeyPem) {
+  std::string body = v.dump();
+  std::vector<uint8_t> data(body.begin(), body.end());
+  std::vector<uint8_t> sig;
+  if (!Crypto::rsaSign(privateKeyPem, data, sig)) return body; // unsigned; will fail verify
+  json::Value out = v;
+  out.set("sig", Crypto::toBase64(sig));
+  return out.dump();
 }
 
 std::string addHoursToUtcString(const std::string& utc, int hours) {
@@ -106,7 +165,7 @@ std::string addHoursToUtcString(const std::string& utc, int hours) {
   tm.tm_hour = h;
   tm.tm_min = mi;
   tm.tm_sec = s;
-  std::time_t t = timegm(&tm);
+  std::time_t t = timegmPortable(&tm);
   t += static_cast<std::time_t>(hours) * 3600;
   gmtime_r(&t, &tm);
   char buf[32];
@@ -142,6 +201,13 @@ struct CoreImpl {
   std::map<std::string, Device> devices;
   std::map<std::string, int64_t> lastSeen;
   std::map<std::string, Device> pendingRequests;
+  std::map<std::string, std::string> pendingRequestNonce; // incoming pair requests: deviceId -> nonce
+
+  struct PendingOutgoing {
+    std::string nonce;
+    std::string publicKey; // peer key captured at request time (empty for manual IP)
+  };
+  std::map<std::string, PendingOutgoing> pendingOutgoing; // outgoing pair requests: deviceId -> state
 
   std::mutex cbMutex;
   std::atomic<bool> running{false};
@@ -173,10 +239,10 @@ struct CoreImpl {
   void announceLoop();
   void markOfflineStale();
 
-  std::string encryptChunk(const std::string& keyB64, const std::string& md5Hex, size_t chunkIndex,
-                           const std::vector<uint8_t>& plain, std::vector<uint8_t>& out);
-  bool decryptChunk(const std::string& keyB64, const std::string& md5Hex, size_t chunkIndex,
-                    const std::vector<uint8_t>& frame, std::vector<uint8_t>& plain);
+  std::string encryptChunk(const std::string& keyB64, const std::vector<uint8_t>& plain,
+                           std::vector<uint8_t>& out);
+  bool decryptChunk(const std::string& keyB64, const std::vector<uint8_t>& frame,
+                    std::vector<uint8_t>& plain);
 
   void applyCacheExpiry();
   void applyRateLimit();
@@ -255,25 +321,28 @@ Device CoreImpl::deviceFromDiscovery(const DiscoveryMessage& m) {
   return d;
 }
 
-std::string CoreImpl::encryptChunk(const std::string& keyB64, const std::string& md5Hex, size_t chunkIndex,
-                                   const std::vector<uint8_t>& plain, std::vector<uint8_t>& out) {
+std::string CoreImpl::encryptChunk(const std::string& keyB64, const std::vector<uint8_t>& plain,
+                                   std::vector<uint8_t>& out) {
   auto key = Crypto::fromBase64(keyB64);
   if (key.empty()) return "no aes key";
   std::vector<uint8_t> iv, tag;
-  deriveChunkIv(md5Hex, chunkIndex, iv);
+  Crypto::generateAesKey(iv, 12); // random 96-bit nonce per chunk -> no reuse
   if (!Crypto::aesGcmEncrypt(key, iv, plain.data(), plain.size(), out, tag)) return "encrypt failed";
+  // Frame layout: IV(12) || ciphertext || tag(16).
+  out.insert(out.begin(), iv.begin(), iv.end());
   out.insert(out.end(), tag.begin(), tag.end());
   return "";
 }
 
-bool CoreImpl::decryptChunk(const std::string& keyB64, const std::string& md5Hex, size_t chunkIndex,
-                            const std::vector<uint8_t>& frame, std::vector<uint8_t>& plain) {
-  if (frame.size() < kTagLen) return false;
+bool CoreImpl::decryptChunk(const std::string& keyB64, const std::vector<uint8_t>& frame,
+                            std::vector<uint8_t>& plain) {
+  constexpr size_t kIvLen = 12;
+  if (frame.size() < kIvLen + kTagLen) return false;
   auto key = Crypto::fromBase64(keyB64);
   if (key.empty()) return false;
-  std::vector<uint8_t> iv, tag(frame.end() - kTagLen, frame.end());
-  deriveChunkIv(md5Hex, chunkIndex, iv);
-  return Crypto::aesGcmDecrypt(key, iv, frame.data(), frame.size() - kTagLen, tag, plain);
+  std::vector<uint8_t> iv(frame.begin(), frame.begin() + kIvLen);
+  std::vector<uint8_t> tag(frame.end() - kTagLen, frame.end());
+  return Crypto::aesGcmDecrypt(key, iv, frame.data() + kIvLen, frame.size() - kIvLen - kTagLen, tag, plain);
 }
 
 // ---------- discovery ----------
@@ -313,11 +382,18 @@ std::string CoreImpl::onIncoming(const std::string& peerId, const std::string& h
   json::Value h = json::Value::parse(headerJson);
   std::string cmd = h["cmd"].asString();
 
-  auto isTrustedPeer = [&]() -> bool {
-    return storage && storage->getTrustedDevice(peerId).has_value();
+  // A peer is authenticated only if it is in the trusted list AND its control
+  // message carries a valid RSA signature from that device's key. This prevents
+  // spoofing a trusted deviceId on the unauthenticated LAN.
+  auto authenticatedPeer = [&]() -> bool {
+    if (!storage) return false;
+    auto td = storage->getTrustedDevice(peerId);
+    if (!td || td->publicKey.empty()) return false;
+    return verifySignedHeader(headerJson, td->publicKey);
   };
 
   if (cmd == "fileProbe") {
+    if (!authenticatedPeer()) return ackJson(false, "untrusted").dump();
     std::string fileId = h["fileId"].asString();
     bool exists = storage && storage->getFile(fileId).has_value();
     json::Value r = json::Value::object();
@@ -328,6 +404,7 @@ std::string CoreImpl::onIncoming(const std::string& peerId, const std::string& h
   }
 
   if (cmd == "fileResume") {
+    if (!authenticatedPeer()) return ackJson(false, "untrusted").dump();
     std::string fileId = h["fileId"].asString();
     int done = 0, total = 0;
     std::string peer;
@@ -345,7 +422,7 @@ std::string CoreImpl::onIncoming(const std::string& peerId, const std::string& h
     int totalChunks = static_cast<int>(h["chunkTotal"].asInt(0));
     std::string enc = h["enc"].asString();
 
-    if (!isTrustedPeer()) {
+    if (!authenticatedPeer()) {
       return ackJson(false, "untrusted").dump();
     }
 
@@ -366,11 +443,9 @@ std::string CoreImpl::onIncoming(const std::string& peerId, const std::string& h
 
     std::string finalPath = cache->buildCachePath(fi.fileId, fi.fileName);
     bool append = resumeFrom > 0 && fs::exists(finalPath);
-    std::ofstream out(finalPath, std::ios::binary | std::ios::trunc);
-    if (append) {
-      out.close();
-      out.open(finalPath, std::ios::binary | std::ios::app);
-    }
+    // Do NOT truncate when resuming: opening with trunc would destroy the
+    // already-received prefix before appending the remaining chunks.
+    std::ofstream out(finalPath, std::ios::binary | (append ? std::ios::app : std::ios::trunc));
     if (!out) return ackJson(false, "open failed").dump();
 
     emitFileReceiveStarted(fi);
@@ -388,7 +463,7 @@ std::string CoreImpl::onIncoming(const std::string& peerId, const std::string& h
       }
       std::vector<uint8_t> plain;
       if (enc == "aes128-gcm") {
-        if (!decryptChunk(peer.aesKey, fi.fileId, static_cast<size_t>(resumeFrom + i), frame, plain)) {
+        if (!decryptChunk(peer.aesKey, frame, plain)) {
           fail = true;
           failMsg = "decrypt failed";
           break;
@@ -444,7 +519,7 @@ std::string CoreImpl::onIncoming(const std::string& peerId, const std::string& h
   }
 
   if (cmd == "fileDelete") {
-    if (!isTrustedPeer()) return ackJson(false, "untrusted").dump();
+    if (!authenticatedPeer()) return ackJson(false, "untrusted").dump();
     std::string fileId = h["fileId"].asString();
     if (auto existing = storage->getFile(fileId)) {
       cache->removeFile(existing->fileId, existing->fileName);
@@ -455,7 +530,7 @@ std::string CoreImpl::onIncoming(const std::string& peerId, const std::string& h
   }
 
   if (cmd == "syncAllFiles") {
-    if (!isTrustedPeer()) return ackJson(false, "untrusted").dump();
+    if (!authenticatedPeer()) return ackJson(false, "untrusted").dump();
     json::Value missing = json::Value::array();
     for (const auto& item : h["fileList"].asArray()) {
       FileInfo f = fileInfoFromJson(item);
@@ -484,6 +559,7 @@ std::string CoreImpl::onIncoming(const std::string& peerId, const std::string& h
     {
       std::lock_guard<std::mutex> lock(devMutex);
       pendingRequests[d.deviceId] = d;
+      pendingRequestNonce[d.deviceId] = req.nonce;
       devices[d.deviceId] = d;
       lastSeen[d.deviceId] = nowEpochSeconds();
     }
@@ -498,6 +574,28 @@ std::string CoreImpl::onIncoming(const std::string& peerId, const std::string& h
       return ackJson(false, "bad accept").dump();
     }
     if (targetId != selfId()) return ackJson(false, "target mismatch").dump();
+
+    // Must answer one of our own outstanding pair requests, with a matching nonce,
+    // and be signed by the key we originally addressed. Otherwise any LAN peer
+    // could self-trust by sending an unsolicited pairAccept.
+    PendingOutgoing pending;
+    bool havePending = false;
+    {
+      std::lock_guard<std::mutex> lock(devMutex);
+      auto it = pendingOutgoing.find(peerId);
+      if (it != pendingOutgoing.end()) {
+        pending = it->second;
+        havePending = true;
+      }
+    }
+    if (!havePending) return ackJson(false, "no pending request").dump();
+    std::string nonce = h["nonce"].asString();
+    if (nonce.empty() || nonce != pending.nonce) return ackJson(false, "nonce mismatch").dump();
+    // For manual-IP peers we have no prior key -> trust-on-first-use from the
+    // embedded key. For discovered peers, verify against the announced key.
+    std::string verifyKey = pending.publicKey.empty() ? pubPem : pending.publicKey;
+    if (!verifySignedHeader(headerJson, verifyKey)) return ackJson(false, "bad signature").dump();
+
     auto enc = Crypto::fromBase64(encKey);
     auto dec = std::vector<uint8_t>();
     if (!Crypto::rsaDecrypt(privateKeyPem, enc, dec)) return ackJson(false, "decrypt failed").dump();
@@ -522,6 +620,8 @@ std::string CoreImpl::onIncoming(const std::string& peerId, const std::string& h
       devices[peerId] = d;
       lastSeen[peerId] = nowEpochSeconds();
       pendingRequests.erase(peerId);
+      pendingRequestNonce.erase(peerId);
+      pendingOutgoing.erase(peerId);
     }
     if (storage) {
       d.lastOnline = nowEpochSeconds();
@@ -559,7 +659,7 @@ bool CoreImpl::sendFileToPeer(const Device& peer, const FileInfo& fi) {
   probe.set("fileName", fi.fileName);
   probe.set("fileSize", fi.fileSize);
   std::string reply;
-  if (!transport->sendJson(peer, probe.dump(), reply)) {
+  if (!transport->sendJson(peer, signJson(probe, privateKeyPem), reply)) {
     emitError("连接失败: " + peer.deviceName);
     return false;
   }
@@ -574,7 +674,7 @@ bool CoreImpl::sendFileToPeer(const Device& peer, const FileInfo& fi) {
   resume.set("cmd", "fileResume");
   resume.set("deviceId", selfId());
   resume.set("fileId", fi.fileId);
-  if (transport->sendJson(peer, resume.dump(), reply)) {
+  if (transport->sendJson(peer, signJson(resume, privateKeyPem), reply)) {
     json::Value rv = json::Value::parse(reply);
     resumeFrom = static_cast<int>(rv["chunksDone"].asInt(0));
   }
@@ -602,7 +702,6 @@ bool CoreImpl::sendFileToPeer(const Device& peer, const FileInfo& fi) {
 
   std::string path = fi.cachePath;
   std::string keyB64 = peer.aesKey;
-  std::string md5Hex = fi.fileId;
 
   std::ifstream in(path, std::ios::binary);
   if (!in) {
@@ -613,8 +712,8 @@ bool CoreImpl::sendFileToPeer(const Device& peer, const FileInfo& fi) {
 
   std::string ackReply;
   bool ok = transport->sendFile(
-      peer, h.dump(), chunkTotal - static_cast<size_t>(resumeFrom),
-      [this, path, keyB64, md5Hex, resumeFrom, fi, fileSize](size_t idx, std::vector<uint8_t>& out) -> bool {
+      peer, signJson(h, privateKeyPem), chunkTotal - static_cast<size_t>(resumeFrom),
+      [this, path, keyB64, resumeFrom, fi, fileSize](size_t idx, std::vector<uint8_t>& out) -> bool {
         size_t globalIdx = static_cast<size_t>(resumeFrom) + idx;
         std::ifstream f(path, std::ios::binary);
         if (!f) return false;
@@ -623,7 +722,7 @@ bool CoreImpl::sendFileToPeer(const Device& peer, const FileInfo& fi) {
         f.read(reinterpret_cast<char*>(plain.data()), static_cast<std::streamsize>(plain.size()));
         std::streamsize got = f.gcount();
         plain.resize(static_cast<size_t>(got));
-        if (encryptChunk(keyB64, md5Hex, globalIdx, plain, out) != "") return false;
+        if (encryptChunk(keyB64, plain, out) != "") return false;
         TransferProgress p;
         p.fileId = fi.fileId;
         p.fileName = fi.fileName;
@@ -649,7 +748,7 @@ bool CoreImpl::sendDeleteToPeer(const Device& peer, const FileInfo& fi) {
   v.set("deviceId", selfId());
   v.set("fileId", fi.fileId);
   std::string reply;
-  return transport->sendJson(peer, v.dump(), reply);
+  return transport->sendJson(peer, signJson(v, privateKeyPem), reply);
 }
 
 void CoreImpl::syncWithPeer(const Device& peer) {
@@ -662,7 +761,7 @@ void CoreImpl::syncWithPeer(const Device& peer) {
   v.set("deviceId", selfId());
   v.set("fileList", list);
   std::string reply;
-  if (!transport->sendJson(peer, v.dump(), reply)) return;
+  if (!transport->sendJson(peer, signJson(v, privateKeyPem), reply)) return;
 
   json::Value rv = json::Value::parse(reply);
   std::vector<std::string> missingIds;
@@ -697,6 +796,8 @@ void CoreImpl::markOfflineStale() {
   {
     std::lock_guard<std::mutex> lock(devMutex);
     for (auto& kv : devices) {
+      // Manually-added IP devices have no discovery heartbeat; keep them online.
+      if (kv.first.rfind("manual_", 0) == 0) continue;
       auto it = lastSeen.find(kv.first);
       if (it != lastSeen.end() && it->second + kStaleTimeoutSec < now && kv.second.isOnline) {
         kv.second.isOnline = false;
@@ -755,13 +856,13 @@ Core& Core::instance() {
 
 bool Core::configure(const CoreConfig& cfg) {
   impl_->cfg = cfg;
-  if (impl_->cfg.deviceId.empty()) impl_->cfg.deviceId = generateDeviceId();
+  if (impl_->cfg.dataDir.empty()) impl_->cfg.dataDir = "./localsend-data";
+  if (impl_->cfg.deviceId.empty()) impl_->cfg.deviceId = loadOrCreateDeviceId(impl_->cfg.dataDir);
   if (impl_->cfg.deviceName.empty()) {
     char host[256] = {0};
     if (gethostname(host, sizeof(host)) == 0) impl_->cfg.deviceName = host;
     else impl_->cfg.deviceName = "localsend-device";
   }
-  if (impl_->cfg.dataDir.empty()) impl_->cfg.dataDir = "./localsend-data";
   return true;
 }
 
@@ -786,12 +887,19 @@ bool Core::start() {
     std::ofstream pubOut(pubPath, std::ios::trunc);
     privOut << impl_->privateKeyPem;
     pubOut << impl_->publicKeyPem;
+    // Restrict the private key and its directory to the owner.
+    ::chmod(privPath.c_str(), 0600);
+    ::chmod((impl_->cfg.dataDir + "/keys").c_str(), 0700);
   }
 
   impl_->storage = std::make_unique<Storage>(impl_->cfg.dataDir + "/localsend.db");
   if (!impl_->storage->open()) return false;
   impl_->storage->loadSettings(impl_->settings);
-  impl_->cache = std::make_unique<Cache>(impl_->cfg.dataDir + "/cache");
+  std::string cacheDir = impl_->settings.cacheDir.empty()
+                             ? impl_->cfg.dataDir + "/cache"
+                             : impl_->settings.cacheDir;
+  fs::create_directories(cacheDir, ec);
+  impl_->cache = std::make_unique<Cache>(cacheDir);
   impl_->cache->ensureDirs();
 
   impl_->transport = std::make_unique<Transport>();
@@ -957,6 +1065,10 @@ bool Core::requestPair(const std::string& deviceId) {
   }
   if (target.deviceId.empty() || target.tcpPort == 0) return false;
 
+  std::vector<uint8_t> nonceBytes;
+  Crypto::generateAesKey(nonceBytes, 16);
+  std::string nonce = Crypto::toBase64(nonceBytes);
+
   PairRequest req;
   req.deviceId = impl_->selfId();
   req.deviceName = impl_->cfg.deviceName;
@@ -964,9 +1076,19 @@ bool Core::requestPair(const std::string& deviceId) {
   req.publicKey = impl_->publicKeyPem;
   req.ip = impl_->localIpCache.empty() ? getDefaultLocalIp() : impl_->localIpCache;
   req.tcpPort = impl_->cfg.tcpPort;
+  req.nonce = nonce;
+
+  {
+    std::lock_guard<std::mutex> lock(impl_->devMutex);
+    impl_->pendingOutgoing[deviceId] = {nonce, target.publicKey};
+  }
 
   std::string reply;
   if (!impl_->transport->sendJson(target, Pairing::buildRequest(req), reply)) {
+    {
+      std::lock_guard<std::mutex> lock(impl_->devMutex);
+      impl_->pendingOutgoing.erase(deviceId);
+    }
     impl_->emitError("配对连接失败: " + target.deviceName);
     return false;
   }
@@ -989,6 +1111,11 @@ bool Core::pairDevice(const std::string& deviceId, bool accept) {
     v.set("deviceId", impl_->selfId());
     std::string reply;
     impl_->transport->sendJson(target, v.dump(), reply);
+    {
+      std::lock_guard<std::mutex> lock(impl_->devMutex);
+      impl_->pendingRequests.erase(target.deviceId);
+      impl_->pendingRequestNonce.erase(target.deviceId);
+    }
     impl_->emitPairResult(target, false);
     return true;
   }
@@ -1002,9 +1129,15 @@ bool Core::pairDevice(const std::string& deviceId, bool accept) {
     return false;
   }
   std::string encB64 = Crypto::toBase64(enc);
+  std::string nonce;
+  {
+    std::lock_guard<std::mutex> lock(impl_->devMutex);
+    auto it = impl_->pendingRequestNonce.find(deviceId);
+    if (it != impl_->pendingRequestNonce.end()) nonce = it->second;
+  }
   json::Value v = json::Value::parse(Pairing::buildAccept(
       target.deviceId, impl_->publicKeyPem, encB64, impl_->cfg.deviceName,
-      deviceTypeToString(impl_->cfg.deviceType), impl_->cfg.tcpPort));
+      deviceTypeToString(impl_->cfg.deviceType), impl_->cfg.tcpPort, nonce));
   v.set("deviceId", impl_->selfId());
 
   Device self;
@@ -1015,7 +1148,7 @@ bool Core::pairDevice(const std::string& deviceId, bool accept) {
   self.tcpPort = impl_->cfg.tcpPort;
 
   std::string reply;
-  if (!impl_->transport->sendJson(target, v.dump(), reply)) {
+  if (!impl_->transport->sendJson(target, signJson(v, impl_->privateKeyPem), reply)) {
     impl_->emitError("配对连接失败: " + target.deviceName);
     return false;
   }
@@ -1035,6 +1168,7 @@ bool Core::pairDevice(const std::string& deviceId, bool accept) {
     impl_->devices[target.deviceId] = target;
     impl_->lastSeen[target.deviceId] = nowEpochSeconds();
     impl_->pendingRequests.erase(target.deviceId);
+    impl_->pendingRequestNonce.erase(target.deviceId);
   }
   impl_->storage->addTrustedDevice(target);
   impl_->emitPairResult(target, true);
@@ -1083,6 +1217,36 @@ void Core::saveSettings() {
   if (impl_->storage) impl_->storage->saveSettings(impl_->settings);
   impl_->applyRateLimit();
   if (impl_->settings.cacheExpireHours > 0) impl_->applyCacheExpiry();
+}
+
+std::string Core::cacheDir() const {
+  return impl_->cache ? impl_->cache->cacheDir() : std::string();
+}
+
+bool Core::setCacheDir(const std::string& dir) {
+  if (dir.empty() || !impl_->running.load() || !impl_->cache || !impl_->storage) return false;
+  if (dir == impl_->cache->cacheDir()) return true;
+
+  std::error_code ec;
+  fs::create_directories(dir, ec);
+  if (ec) return false;
+
+  // Move existing cached files into the new staging directory and update paths.
+  for (auto& f : impl_->storage->listFiles()) {
+    if (f.cachePath.empty() || !fs::exists(f.cachePath)) continue;
+    std::string newPath = dir + "/" + f.fileId + "_" + sanitizeFileName(f.fileName);
+    fs::rename(f.cachePath, newPath, ec);
+    if (!ec) {
+      f.cachePath = newPath;
+      impl_->storage->upsertFile(f);
+    }
+  }
+
+  impl_->cache = std::make_unique<Cache>(dir);
+  impl_->cache->ensureDirs();
+  impl_->settings.cacheDir = dir;
+  impl_->storage->saveSettings(impl_->settings);
+  return true;
 }
 
 std::string Core::deviceId() const { return impl_->cfg.deviceId; }

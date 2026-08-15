@@ -2,6 +2,7 @@
   "src": [
     "pages/HomePage",
     "pages/FloatingBarPage",
+    "pages/DeckPage",
     "pages/FloatingPanelPage",
     "pages/PreviewPage",
     "pages/SettingsPage",

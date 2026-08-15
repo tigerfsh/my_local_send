@@ -1,4 +1,4 @@
-import { window, promptAction } from '@kit.ArkUI';
+import { window, display, promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -7,16 +7,17 @@ const TAG: string = 'FloatingWindowMgr';
 
 /**
  * 悬浮窗管理：基于 window 子窗口能力创建置顶悬浮窗。
+ * 三态：收缩(传送门) -> 横向展开(堆叠) -> 纵向展开(列表)。
  * 注意：需要 SYSTEM_FLOAT_WINDOW 权限（系统级 ACL 授权）。
  */
 export class FloatingWindowMgr {
   private static floatWin: window.Window | null = null;
   private static ctx: common.UIAbilityContext | null = null;
   private static currentPage: string = 'pages/FloatingBarPage';
-  private static winWidth: number = 148;
-  private static winHeight: number = 46;
-  private static posX: number = 0;
-  private static posY: number = 100;
+  private static winWidth: number = 44;
+  private static winHeight: number = 96;
+  // 悬浮窗距顶部距离（vp）
+  private static marginTop: number = 100;
 
   static init(ctx: common.UIAbilityContext): void {
     FloatingWindowMgr.ctx = ctx;
@@ -34,16 +35,16 @@ export class FloatingWindowMgr {
     if (!FloatingWindowMgr.ctx) {
       return;
     }
-    const options: window.WindowOptions = {
+    const config: window.Configuration = {
       name: 'floatWindow',
-      windowType: window.WindowType.WINDOW_TYPE_FLOAT,
+      windowType: window.WindowType.TYPE_FLOAT,
       ctx: FloatingWindowMgr.ctx
     };
     try {
-      const win = await window.createWindow('floatWindow', options);
+      const win = await window.createWindow(config);
       FloatingWindowMgr.floatWin = win;
-      await win.moveWindowTo(FloatingWindowMgr.posX, FloatingWindowMgr.posY);
       await win.resize(FloatingWindowMgr.winWidth, FloatingWindowMgr.winHeight);
+      await FloatingWindowMgr.dockRight();
       await win.setUIContent('pages/FloatingBarPage');
       await win.showWindow();
       FloatingWindowMgr.currentPage = 'pages/FloatingBarPage';
@@ -59,16 +60,22 @@ export class FloatingWindowMgr {
 
   static async close(): Promise<void> {
     if (FloatingWindowMgr.floatWin) {
-      await FloatingWindowMgr.floatWin.hideWindow();
       await FloatingWindowMgr.floatWin.destroyWindow();
       FloatingWindowMgr.floatWin = null;
     }
   }
 
+  // 收缩态：传送门
   static async showBar(): Promise<void> {
-    await FloatingWindowMgr.loadPage('pages/FloatingBarPage', 148, 46);
+    await FloatingWindowMgr.loadPage('pages/FloatingBarPage', 44, 96);
   }
 
+  // 横向展开态：堆叠 + 个数
+  static async showDeck(): Promise<void> {
+    await FloatingWindowMgr.loadPage('pages/DeckPage', 160, 96);
+  }
+
+  // 纵向展开态：完整文件列表
   static async showPanel(): Promise<void> {
     await FloatingWindowMgr.loadPage('pages/FloatingPanelPage', 344, 480);
   }
@@ -86,10 +93,23 @@ export class FloatingWindowMgr {
   }
 
   static async setPosition(x: number, y: number): Promise<void> {
-    FloatingWindowMgr.posX = x;
-    FloatingWindowMgr.posY = y;
     if (FloatingWindowMgr.floatWin) {
       await FloatingWindowMgr.floatWin.moveWindowTo(x, y);
+    }
+  }
+
+  // 贴屏幕右边缘
+  private static async dockRight(): Promise<void> {
+    if (!FloatingWindowMgr.floatWin) {
+      return;
+    }
+    try {
+      const d = display.getDefaultDisplaySync();
+      const x = d.width - FloatingWindowMgr.winWidth;
+      await FloatingWindowMgr.floatWin.moveWindowTo(x, FloatingWindowMgr.marginTop);
+    } catch (err) {
+      let e = err as BusinessError;
+      hilog.error(0x0000, TAG, 'dockRight failed: %{public}s', JSON.stringify(e));
     }
   }
 
@@ -99,7 +119,10 @@ export class FloatingWindowMgr {
       return;
     }
     try {
+      FloatingWindowMgr.winWidth = w;
+      FloatingWindowMgr.winHeight = h;
       await win.resize(w, h);
+      await FloatingWindowMgr.dockRight();
       await win.setUIContent(page);
       FloatingWindowMgr.currentPage = page;
     } catch (err) {

@@ -277,12 +277,15 @@ bool Storage::saveSettings(const Settings& s) {
   char buf[32];
   std::snprintf(buf, sizeof(buf), "%d", s.floatWindowLocked ? 1 : 0);
   bool ok = put("floatWindowLocked", buf);
+  std::snprintf(buf, sizeof(buf), "%d", s.pinned ? 1 : 0);
+  ok = ok && put("pinned", buf);
   std::snprintf(buf, sizeof(buf), "%d", s.autoCollapseMs);
   ok = ok && put("autoCollapseMs", buf);
   std::snprintf(buf, sizeof(buf), "%d", s.cacheExpireHours);
   ok = ok && put("cacheExpireHours", buf);
   std::snprintf(buf, sizeof(buf), "%lld", static_cast<long long>(s.maxTransferRateBps));
   ok = ok && put("maxTransferRateBps", buf);
+  ok = ok && put("cacheDir", s.cacheDir);
   return ok;
 }
 
@@ -294,9 +297,11 @@ bool Storage::loadSettings(Settings& s) const {
     std::string key = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
     std::string val = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
     if (key == "floatWindowLocked") s.floatWindowLocked = val == "1";
+    else if (key == "pinned") s.pinned = val == "1";
     else if (key == "autoCollapseMs") s.autoCollapseMs = std::atoi(val.c_str());
     else if (key == "cacheExpireHours") s.cacheExpireHours = std::atoi(val.c_str());
     else if (key == "maxTransferRateBps") s.maxTransferRateBps = std::atoll(val.c_str());
+    else if (key == "cacheDir") s.cacheDir = val;
   }
   sqlite3_finalize(stmt);
   return true;

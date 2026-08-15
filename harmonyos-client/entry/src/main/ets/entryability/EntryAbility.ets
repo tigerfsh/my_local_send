@@ -33,6 +33,7 @@ export default class EntryAbility extends UIAbility {
 
     AppStorage.setOrCreate<number>('filesTick', 0);
     AppStorage.setOrCreate<number>('devicesTick', 0);
+    AppStorage.setOrCreate<boolean>('pinned', false);
 
     // 主窗口加载引导主页（悬浮窗独立加载悬浮条页面，避免重复显示）
     windowStage.loadContent('pages/HomePage', (err) => {

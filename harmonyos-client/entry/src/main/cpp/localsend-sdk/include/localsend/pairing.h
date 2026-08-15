@@ -13,6 +13,7 @@ struct PairRequest {
   std::string publicKey;
   std::string ip;
   uint16_t tcpPort = 0;
+  std::string nonce;
 };
 
 // Builds and parses pairing protocol messages.
@@ -22,7 +23,7 @@ public:
   static bool parseRequest(const std::string& json, PairRequest& out);
   static std::string buildAccept(const std::string& targetDeviceId, const std::string& publicKeyPem,
                                  const std::string& aesKeyEncryptedBase64, const std::string& deviceName,
-                                 const std::string& deviceType, uint16_t tcpPort);
+                                 const std::string& deviceType, uint16_t tcpPort, const std::string& nonce);
   static std::string buildReject(const std::string& targetDeviceId, const std::string& reason = "");
   static bool parseAccept(const std::string& json, std::string& targetDeviceId, std::string& publicKeyPem,
                           std::string& aesKeyEncryptedBase64, std::string& deviceName, std::string& deviceType,

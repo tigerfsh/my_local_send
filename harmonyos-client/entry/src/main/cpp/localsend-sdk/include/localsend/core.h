@@ -57,6 +57,9 @@ public:
   const Settings& settings() const;
   void saveSettings();
 
+  std::string cacheDir() const;
+  bool setCacheDir(const std::string& dir);
+
   std::string deviceId() const;
   std::string deviceName() const;
   std::string localIp() const;

@@ -27,11 +27,11 @@ export class LocalSendBridge {
   }
 
   static getFileList(): FileInfo[] {
-    const raw = bridge.getFileListJson();
+    const raw: string = bridge.getFileListJson();
     if (!raw) {
       return [];
     }
-    const arr = JSON.parse(raw) as Array<Record<string, Object>>;
+    const arr = JSON.parse(raw) as Array<Record<string, string | number | boolean>>;
     const out: FileInfo[] = [];
     arr.forEach((item) => {
       out.push(FileInfo.fromJson(item));
@@ -39,12 +39,16 @@ export class LocalSendBridge {
     return out;
   }
 
+  static rescan(): boolean {
+    return bridge.rescan();
+  }
+
   static getDevices(): DeviceInfo[] {
-    const raw = bridge.getDevicesJson();
+    const raw: string = bridge.getDevicesJson();
     if (!raw) {
       return [];
     }
-    const arr = JSON.parse(raw) as Array<Record<string, Object>>;
+    const arr = JSON.parse(raw) as Array<Record<string, string | number | boolean>>;
     const out: DeviceInfo[] = [];
     arr.forEach((item) => {
       out.push(DeviceInfo.fromJson(item));
@@ -74,6 +78,26 @@ export class LocalSendBridge {
 
   static saveSettingsJson(json: string): void {
     bridge.saveSettingsJson(json);
+  }
+
+  static getPinned(): boolean {
+    return bridge.getPinned();
+  }
+
+  static setPinned(on: boolean): boolean {
+    return bridge.setPinned(on);
+  }
+
+  static getCacheDir(): string {
+    return bridge.getCacheDir();
+  }
+
+  static setCacheDir(dir: string): boolean {
+    return bridge.setCacheDir(dir);
+  }
+
+  static readTextFile(path: string): string {
+    return bridge.readTextFile(path);
   }
 
   static onEvent(cb: (json: string) => void): void {

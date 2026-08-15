@@ -13,7 +13,7 @@ export class DeviceInfo {
   isTrusted: boolean = false;
   isOnline: boolean = false;
 
-  static fromJson(json: Record<string, Object>): DeviceInfo {
+  static fromJson(json: Record<string, string | number | boolean>): DeviceInfo {
     let d = new DeviceInfo();
     d.deviceId = String(json['deviceId'] ?? '');
     d.deviceName = String(json['deviceName'] ?? '');

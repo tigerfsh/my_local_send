@@ -1,5 +1,8 @@
 #include "bridge_common.h"
 
+#include <fstream>
+#include <iterator>
+
 #include "localsend/localsend.h"
 #include "localsend-sdk/src/json.hpp"
 
@@ -66,6 +69,52 @@ napi_value SaveSettingsJson(napi_env env, napi_callback_info info) {
   if (v.has("maxTransferRateBps")) s.maxTransferRateBps = v["maxTransferRateBps"].asInt();
   localsend::Core::instance().saveSettings();
   return MakeBool(env, true);
+}
+
+napi_value GetPinned(napi_env env, napi_callback_info info) {
+  (void)info;
+  return MakeBool(env, localsend::Core::instance().settings().pinned);
+}
+
+napi_value SetPinned(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+  if (argc < 1) return MakeBool(env, false);
+  bool on = GetBool(env, args[0]);
+  localsend::Core::instance().settings().pinned = on;
+  localsend::Core::instance().saveSettings();
+  return MakeBool(env, true);
+}
+
+napi_value GetCacheDir(napi_env env, napi_callback_info info) {
+  (void)info;
+  return MakeUtf8(env, localsend::Core::instance().cacheDir());
+}
+
+napi_value SetCacheDir(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+  if (argc < 1) return MakeBool(env, false);
+  std::string dir = GetUtf8(env, args[0]);
+  return MakeBool(env, localsend::Core::instance().setCacheDir(dir));
+}
+
+napi_value ReadTextFile(napi_env env, napi_callback_info info) {
+  size_t argc = 1;
+  napi_value args[1];
+  napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+  if (argc < 1) return MakeUtf8(env, "");
+  std::string path = GetUtf8(env, args[0]);
+  std::ifstream in(path, std::ios::binary);
+  if (!in) return MakeUtf8(env, "");
+  std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  // 空文件或含 '\0'（视为二进制）则返回空，交由上层回退处理
+  if (data.empty() || data.find('\0') != std::string::npos) return MakeUtf8(env, "");
+  const size_t kMaxBytes = 256 * 1024;
+  if (data.size() > kMaxBytes) data = data.substr(0, kMaxBytes);
+  return MakeUtf8(env, data);
 }
 
 } // namespace lsbridge

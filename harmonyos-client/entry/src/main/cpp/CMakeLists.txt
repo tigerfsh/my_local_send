@@ -9,6 +9,10 @@ set(LOCALSEND_SDK_INC ${CMAKE_CURRENT_SOURCE_DIR}/localsend-sdk/include)
 
 set(LOCALSEND_SQLITE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/sqlite)
 
+# OpenHarmony NDK 不提供 OpenSSL（无 openssl/*.h，无 libcrypto/libssl）。
+# 这里使用为本工程交叉编译好的 OpenSSL 静态库（见 cpp/openssl/，aarch64-linux-ohos）。
+set(LOCALSEND_OPENSSL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/openssl)
+
 # OpenHarmony NDK 不提供可链接的 sqlite3 系统库。
 # 需在 cpp/sqlite/ 下放置 SQLite 合并版源码（sqlite3.c + sqlite3.h，来自 https://sqlite.org/amalgamation.html）。
 if(EXISTS ${LOCALSEND_SQLITE_DIR}/sqlite3.c AND EXISTS ${LOCALSEND_SQLITE_DIR}/sqlite3.h)
@@ -21,7 +25,7 @@ else()
     "and place them under: ${LOCALSEND_SQLITE_DIR}/")
 endif()
 
-add_library(libentry SHARED
+add_library(entry SHARED
   types/napi_init.cpp
   bridge/bridge_common.cpp
   bridge/bridge_core.cpp
@@ -39,17 +43,27 @@ add_library(libentry SHARED
   ${LOCALSEND_SDK_SRC}/core.cpp
 )
 
-target_include_directories(libentry PUBLIC
+target_include_directories(entry PUBLIC
   ${NATIVERENDER_ROOT_PATH}
   ${NATIVERENDER_ROOT_PATH}/types
   ${LOCALSEND_SDK_INC}
   ${LOCALSEND_SDK_SRC}
   ${LOCALSEND_SQLITE_DIR}
+  ${LOCALSEND_OPENSSL_DIR}/include
 )
 
-set_target_properties(libentry PROPERTIES CXX_STANDARD 17)
+set_target_properties(entry PROPERTIES CXX_STANDARD 17)
 
-# libace_napi: NAPI 运行时；libcrypto/libssl: OpenHarmony 系统内置 OpenSSL。
+# libace_napi: NAPI 运行时。
+# OpenSSL：链接交叉编译的静态库（libssl 依赖 libcrypto，顺序在前）。
+# dl/pthread/m 为 musl libc 中已合并的符号，链接空桩归档以保证显式依赖。
 # 注意：SDK 内 core.cpp 使用了 std::filesystem，若目标 OpenHarmony SDK 的 libc++ 不支持，
 # 请将 core.cpp/cache.cpp 中的 filesystem 调用替换为 POSIX 实现（见 docs/architecture.md）。
-target_link_libraries(libentry PUBLIC libace_napi.z.so libcrypto.z.so libssl.z.so)
+target_link_libraries(entry PUBLIC
+  libace_napi.z.so
+  ${LOCALSEND_OPENSSL_DIR}/lib/libssl.a
+  ${LOCALSEND_OPENSSL_DIR}/lib/libcrypto.a
+  dl
+  pthread
+  m
+)

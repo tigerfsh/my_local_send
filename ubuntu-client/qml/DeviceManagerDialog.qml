@@ -2,11 +2,13 @@ import QtQuick
 import QtQuick.Controls
 import LocalSend
 
+// Device manager: shows devices auto-discovered on the LAN (UDP multicast).
+// The user picks a device and taps "配对". No manual IP entry needed.
 Popup {
     id: dlg
     anchors.centerIn: parent
-    width: 360
-    height: 420
+    width: 336
+    height: 460
     padding: 16
     modal: true
 
@@ -20,10 +22,16 @@ Popup {
             color: "#2B3A67"
         }
 
+        Text {
+            text: "同一局域网的设备会自动出现在下方"
+            font.pixelSize: 11
+            color: "#8A93A6"
+        }
+
         ListView {
             id: deviceList
             width: parent.width
-            height: 230
+            height: 300
             clip: true
             model: deviceModel
             spacing: 4
@@ -74,37 +82,27 @@ Popup {
             }
         }
 
+        // Empty state hint.
+        Text {
+            visible: deviceList.count === 0
+            text: "正在扫描局域网设备…"
+            font.pixelSize: 12
+            color: "#8A93A6"
+            anchors.horizontalCenter: parent.horizontalCenter
+        }
+
         Row {
-            spacing: 8
-            TextField {
-                id: ipInput
-                width: 150
-                placeholderText: "设备 IP"
-            }
-            TextField {
-                id: portInput
-                width: 70
-                placeholderText: "端口"
-                text: "53318"
-                validator: IntValidator { bottom: 1; top: 65535 }
+            spacing: 10
+            anchors.horizontalCenter: parent.horizontalCenter
+
+            Button {
+                text: "重新扫描"
+                onClicked: app.rescan()
             }
             Button {
-                text: "手动连接"
-                onClicked: app.connectByIp(ipInput.text.trim(), parseInt(portInput.text))
+                text: "关闭"
+                onClicked: dlg.close()
             }
-        }
-
-        Text {
-            text: "本机: %1  (设备ID: %2)".arg(app.localIp).arg(app.selfDeviceId)
-            font.pixelSize: 11
-            color: "#8A93A6"
-            wrapMode: Text.WordWrap
-        }
-
-        Button {
-            text: "关闭"
-            anchors.horizontalCenter: parent.horizontalCenter
-            onClicked: dlg.close()
         }
     }
 }

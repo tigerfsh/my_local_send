@@ -1,10 +1,11 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 
 Popup {
     id: dlg
     anchors.centerIn: parent
-    width: 300
+    width: 340
     padding: 16
     modal: true
 
@@ -16,6 +17,28 @@ Popup {
             font.pixelSize: 16
             font.bold: true
             color: "#2B3A67"
+        }
+
+        Row {
+            spacing: 10
+            Text {
+                text: "暂存目录"
+                font.pixelSize: 13
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Text {
+                text: app.cacheDir()
+                font.pixelSize: 11
+                color: "#8A93A6"
+                elide: Text.ElideMiddle
+                width: 150
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Button {
+                text: "选择"
+                font.pixelSize: 12
+                onClicked: folderDialog.open()
+            }
         }
 
         Row {
@@ -82,5 +105,11 @@ Popup {
             anchors.horizontalCenter: parent.horizontalCenter
             onClicked: dlg.close()
         }
+    }
+
+    FolderDialog {
+        id: folderDialog
+        title: "选择暂存目录"
+        onAccepted: app.setCacheDir(folderDialog.selectedFolder)
     }
 }

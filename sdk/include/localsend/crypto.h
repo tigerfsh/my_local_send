@@ -14,6 +14,10 @@ public:
   static bool rsaEncrypt(const std::string& publicPem, const std::vector<uint8_t>& in, std::vector<uint8_t>& out);
   static bool rsaDecrypt(const std::string& privatePem, const std::vector<uint8_t>& in, std::vector<uint8_t>& out);
 
+  // SHA-256 + RSA signatures for authenticating control messages.
+  static bool rsaSign(const std::string& privatePem, const std::vector<uint8_t>& data, std::vector<uint8_t>& sig);
+  static bool rsaVerify(const std::string& publicPem, const std::vector<uint8_t>& data, const std::vector<uint8_t>& sig);
+
   static void generateAesKey(std::vector<uint8_t>& key, size_t len = 16);
   static bool aesGcmEncrypt(const std::vector<uint8_t>& key, const std::vector<uint8_t>& iv,
                             const uint8_t* data, size_t len,

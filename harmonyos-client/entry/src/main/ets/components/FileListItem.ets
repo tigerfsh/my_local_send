@@ -1,4 +1,4 @@
-import { FileInfo } from '../model/FileInfo';
+import { FileInfo, FileType } from '../model/FileInfo';
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) {
@@ -22,6 +22,8 @@ export struct FileListItem {
   };
   onPreview: (path: string, type: string) => void = () => {
   };
+  onOpen: (path: string, fileName: string) => void = () => {
+  };
   onDelete: (fileId: string) => void = () => {
   };
 
@@ -36,7 +38,7 @@ export struct FileListItem {
       }
 
       // 缩略图 / 类型图标
-      if (this.file.fileType === 1) {
+      if (this.file.fileType === FileType.Image) {
         Image(this.file.cachePath)
           .width(36)
           .height(36)
@@ -44,14 +46,14 @@ export struct FileListItem {
           .objectFit(ImageFit.Cover)
       } else {
         Column() {
-          Text(this.file.fileType === 2 ? '▶' : '▤')
+          Text(this.file.fileType === FileType.Video ? '▶' : '▤')
             .fontSize(16)
             .fontColor('#5A6B8C')
         }
         .width(36)
         .height(36)
         .justifyContent(FlexAlign.Center)
-        .backgroundColor(this.file.fileType === 2 ? '#FFE7D9' : '#E8EAF0')
+        .backgroundColor(this.file.fileType === FileType.Video ? '#FFE7D9' : '#E8EAF0')
         .borderRadius(6)
       }
 
@@ -68,13 +70,22 @@ export struct FileListItem {
       .alignItems(HorizontalAlign.Start)
       .layoutWeight(1)
 
-      if (this.file.fileType === 1 || this.file.fileType === 2) {
-        Button(this.file.fileType === 2 ? '播放' : '预览')
+      if (this.file.fileType === FileType.Image || this.file.fileType === FileType.Video) {
+        Button(this.file.fileType === FileType.Video ? '播放' : '预览')
           .fontSize(12)
           .height(28)
           .type(ButtonType.Normal)
           .onClick(() => {
-            this.onPreview(this.file.cachePath, this.file.fileType === 2 ? 'video' : 'image');
+            this.onPreview(this.file.cachePath, this.file.fileType === FileType.Video ? 'video' : 'image');
+          })
+      } else {
+        // 文档/其它：文本预览（内置）或系统打开
+        Button('打开')
+          .fontSize(12)
+          .height(28)
+          .type(ButtonType.Normal)
+          .onClick(() => {
+            this.onOpen(this.file.cachePath, this.file.fileName);
           })
       }
 

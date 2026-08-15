@@ -1,8 +1,20 @@
 #include "appcontroller.h"
 
 #include <QDebug>
+#include <QDesktopServices>
+#include <QFile>
+#include <QFileInfo>
+#include <QIcon>
+#include <QImage>
+#include <QMediaPlayer>
 #include <QMetaObject>
+#include <QPixmap>
+#include <QQuickWindow>
+#include <QRegion>
+#include <QTimer>
 #include <QUrl>
+#include <QVideoFrame>
+#include <QVideoSink>
 
 #include <functional>
 
@@ -17,6 +29,9 @@ void postEvent(QObject* receiver, const std::function<void()>& fn) {
 AppController::AppController(QObject* parent) : QObject(parent), core_(localsend::Core::instance()) {
   fileModel_ = new FileListModel(this);
   deviceModel_ = new DeviceListModel(this);
+  connect(this, &AppController::thumbnailReady, this, [this](const QString&) {
+    refreshFileModel();
+  });
 }
 
 AppController::~AppController() {
@@ -41,13 +56,19 @@ void AppController::configure(const QString& dataDir, quint16 tcpPort, const QSt
   cb.onFileRemoved = [this](const localsend::FileInfo&) {
     postEvent(this, [this]() { refreshFileModel(); });
   };
-  cb.onDeviceFound = [this](const localsend::Device&) {
+  cb.onDeviceFound = [this](const localsend::Device& d) {
+    qDebug().noquote() << "[discovery] found" << QString::fromStdString(d.deviceId)
+                       << QString::fromStdString(d.deviceName)
+                       << QString::fromStdString(d.ip) << d.tcpPort
+                       << "trusted=" << d.isTrusted;
     postEvent(this, [this]() { refreshDeviceModel(); });
   };
-  cb.onDeviceOnline = [this](const localsend::Device&) {
+  cb.onDeviceOnline = [this](const localsend::Device& d) {
+    qDebug().noquote() << "[discovery] online" << QString::fromStdString(d.deviceName);
     postEvent(this, [this]() { refreshDeviceModel(); });
   };
-  cb.onDeviceOffline = [this](const localsend::Device&) {
+  cb.onDeviceOffline = [this](const localsend::Device& d) {
+    qDebug().noquote() << "[discovery] offline" << QString::fromStdString(d.deviceName);
     postEvent(this, [this]() { refreshDeviceModel(); });
   };
   cb.onPairRequest = [this](const localsend::Device& d) {
@@ -86,6 +107,144 @@ bool AppController::start() {
 }
 
 void AppController::stop() { core_.stop(); }
+
+void AppController::setWindowMask(int x, int y, int w, int h) {
+  if (window_) window_->setMask(QRegion(x, y, w, h));
+}
+
+void AppController::clearWindowMask() {
+  if (window_) window_->setMask(QRegion());
+}
+
+QString AppController::cacheDir() const {
+  return QString::fromStdString(core_.cacheDir());
+}
+
+bool AppController::setCacheDir(const QString& dir) {
+  QString path = dir;
+  const QUrl url(dir);
+  if (url.isLocalFile()) path = url.toLocalFile();  // handle file:// from FolderDialog
+  return core_.setCacheDir(path.toStdString());
+}
+
+QString AppController::readTextFile(const QString& path) {
+  QFile f(path);
+  if (!f.open(QIODevice::ReadOnly)) return QString();
+  QByteArray data = f.read(256 * 1024);  // cap preview at 256KB
+  f.close();
+  if (data.isEmpty() || data.contains('\0')) return QString();  // empty/binary
+  QString text = QString::fromUtf8(data);
+  if (text.contains(QChar(0xFFFD))) text = QString::fromLocal8Bit(data);
+  return text;
+}
+
+void AppController::openWithSystem(const QString& path) {
+  QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+}
+
+QString AppController::dragUriList(const QString& fileId) const {
+  QStringList urls;
+  if (multiSelect_) {
+    for (const auto& f : files_) {
+      const QString id = QString::fromStdString(f.fileId);
+      if (selected_.contains(id)) {
+        urls << QUrl::fromLocalFile(QString::fromStdString(f.cachePath)).toString();
+      }
+    }
+  }
+  if (urls.isEmpty()) {
+    for (const auto& f : files_) {
+      if (QString::fromStdString(f.fileId) == fileId) {
+        urls << QUrl::fromLocalFile(QString::fromStdString(f.cachePath)).toString();
+        break;
+      }
+    }
+  }
+  return urls.join(QLatin1Char('\n'));
+}
+
+QString AppController::thumbUrl(const QString& fileId, const QString& cachePath, const QString& fileType) {
+  if (fileType == "image") {
+    return QUrl::fromLocalFile(cachePath).toString();
+  }
+  // Already generated (or generating) thumbnail.
+  if (thumbCache_.contains(fileId)) {
+    const QString p = thumbCache_.value(fileId);
+    if (QFileInfo::exists(p)) return QUrl::fromLocalFile(p).toString();
+    thumbCache_.remove(fileId);
+  }
+  const QString thumbPath = cachePath + ".thumb.png";
+  if (QFileInfo::exists(thumbPath)) {
+    thumbCache_[fileId] = thumbPath;
+    return QUrl::fromLocalFile(thumbPath).toString();
+  }
+  if (fileType == "video") {
+    // First-frame extraction is async; QML shows the "▶" fallback until ready.
+    videoQueue_ << fileId << cachePath;
+    processNextVideoThumb();
+    return QString();
+  }
+  // doc / other / unknown: generic document icon from the icon theme.
+  QIcon icon = QIcon::fromTheme(QStringLiteral("text-x-generic"));
+  if (icon.isNull()) icon = QIcon::fromTheme(QStringLiteral("application-x-generic"));
+  QPixmap pm = icon.pixmap(96, 96);
+  if (!pm.isNull() && pm.save(thumbPath, "PNG")) {
+    thumbCache_[fileId] = thumbPath;
+    return QUrl::fromLocalFile(thumbPath).toString();
+  }
+  return QString();
+}
+
+void AppController::processNextVideoThumb() {
+  if (!currentVideoFileId_.isEmpty() || videoQueue_.size() < 2) return;
+  const QString fileId = videoQueue_.takeFirst();
+  const QString path = videoQueue_.takeFirst();
+  if (!videoPlayer_) {
+    videoPlayer_ = new QMediaPlayer(this);
+    videoSink_ = new QVideoSink(this);
+    videoPlayer_->setVideoSink(videoSink_);
+    connect(videoSink_, &QVideoSink::videoFrameChanged, this, &AppController::onVideoFrame);
+    connect(videoPlayer_, &QMediaPlayer::errorOccurred, this,
+            [this](QMediaPlayer::Error, const QString&) {
+              if (currentVideoFileId_.isEmpty()) return;
+              videoPlayer_->stop();
+              currentVideoFileId_.clear();
+              currentVideoThumbPath_.clear();
+              processNextVideoThumb();
+            });
+  }
+  currentVideoFileId_ = fileId;
+  currentVideoThumbPath_ = path + ".thumb.png";
+  videoPlayer_->setSource(QUrl::fromLocalFile(path));
+  videoPlayer_->play();
+  // Give up if no frame arrives (e.g. missing decoder), so the next video runs.
+  QTimer::singleShot(5000, this, [this, fileId]() {
+    if (currentVideoFileId_ == fileId) {
+      videoPlayer_->stop();
+      currentVideoFileId_.clear();
+      currentVideoThumbPath_.clear();
+      processNextVideoThumb();
+    }
+  });
+}
+
+void AppController::onVideoFrame(const QVideoFrame& frame) {
+  if (currentVideoFileId_.isEmpty()) return;
+  QVideoFrame f = frame;
+  if (f.isValid() && f.map(QVideoFrame::ReadOnly)) {
+    QImage img = f.toImage();
+    f.unmap();
+    if (!img.isNull()) {
+      img.save(currentVideoThumbPath_, "PNG");
+      thumbCache_[currentVideoFileId_] = currentVideoThumbPath_;
+      emit thumbnailReady(currentVideoFileId_);
+    }
+  }
+  videoPlayer_->stop();
+  currentVideoFileId_.clear();
+  currentVideoThumbPath_.clear();
+  processNextVideoThumb();
+}
 
 int AppController::fileCount() const { return static_cast<int>(files_.size()); }
 
@@ -130,6 +289,15 @@ void AppController::setAutoCollapseMs(int ms) {
   emit settingsChanged();
 }
 
+bool AppController::pinned() const { return core_.settings().pinned; }
+
+void AppController::setPinned(bool on) {
+  if (core_.settings().pinned == on) return;
+  core_.settings().pinned = on;
+  core_.saveSettings();
+  emit pinnedChanged();
+}
+
 bool AppController::floatWindowLocked() const { return core_.settings().floatWindowLocked; }
 
 void AppController::setFloatWindowLocked(bool locked) {
@@ -161,11 +329,19 @@ void AppController::addFiles(const QVariantList& urls) {
   int added = 0;
   for (const QVariant& v : urls) {
     QUrl url = v.toUrl();
+    qDebug().noquote() << "[addFiles] url=" << url.toString()
+                       << "isLocalFile=" << url.isLocalFile();
     if (!url.isLocalFile()) continue;
     QString path = url.toLocalFile();
-    if (core_.addFile(path.toStdString())) ++added;
+    qDebug().noquote() << "[addFiles] path=" << path;
+    if (core_.addFile(path.toStdString())) {
+      ++added;
+    } else {
+      qDebug().noquote() << "[addFiles] addFile failed for" << path;
+    }
   }
   refreshFileModel();
+  qDebug().noquote() << "[addFiles] added=" << added << "total=" << files_.size();
   if (added > 0) emit toast(QString("已添加 %1 个文件").arg(added));
 }
 

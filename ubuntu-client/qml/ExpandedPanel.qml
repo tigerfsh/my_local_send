@@ -12,6 +12,7 @@ Rectangle {
     signal userAction()
     signal toggleFull()
     signal requestPreview(string path, string type)
+    signal requestTextPreview(string name, string content)
     signal requestSettings()
     signal requestClose()
     signal requestDevices()
@@ -64,6 +65,16 @@ Rectangle {
                 Item { Layout.fillWidth: true }
 
                 Button {
+                    text: "📌"
+                    flat: true
+                    font.pixelSize: 13
+                    opacity: app.pinned ? 1.0 : 0.4
+                    ToolTip.visible: hovered
+                    ToolTip.text: app.pinned ? "取消钉住" : "钉住"
+                    onClicked: app.pinned = !app.pinned
+                }
+
+                Button {
                     text: "⋮"
                     flat: true
                     onClicked: {
@@ -86,6 +97,7 @@ Rectangle {
                         }
                         MenuItem {
                             text: "关闭"
+                            enabled: !app.pinned
                             onTriggered: { panel.requestClose(); panel.userAction() }
                         }
                     }
@@ -105,12 +117,22 @@ Rectangle {
             delegate: FileListItem {
                 width: listView.width
                 onPreviewRequested: (path, type) => panel.requestPreview(path, type)
+                onTextPreviewRequested: (name, content) => panel.requestTextPreview(name, content)
             }
 
             DropArea {
                 anchors.fill: parent
-                onEntered: (drag) => { if (drag.urls.length > 0) panel.userAction() }
-                onDropped: (drop) => { if (drop.urls.length > 0) app.addFiles(drop.urls) }
+                onEntered: (drag) => {
+                    console.log("[drop] list entered urls=", drag.urls.length)
+                    if (drag.urls.length > 0) {
+                        drag.accept()
+                        panel.userAction()
+                    }
+                }
+                onDropped: (drop) => {
+                    console.log("[drop] list dropped urls=", drop.urls.length)
+                    if (drop.urls.length > 0) app.addFiles(drop.urls)
+                }
             }
         }
 
@@ -166,6 +188,8 @@ Rectangle {
         modal: true
         anchors.centerIn: parent
         standardButtons: Dialog.NoButton
+        implicitWidth: 300
+        implicitHeight: 150
         contentItem: Column {
             spacing: 12
             Text { text: "确定删除选中的 %1 个文件？将同步到所有可信设备。".arg(app.selectedIds.length) }

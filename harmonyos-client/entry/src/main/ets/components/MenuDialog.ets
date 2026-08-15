@@ -1,8 +1,7 @@
-import { CustomDialogController } from '@kit.ArkUI';
-
 @CustomDialog
 export struct MenuDialog {
-  controller: CustomDialogController | null = null;
+  controller?: CustomDialogController;
+  @StorageProp('pinned') pinned: boolean = false;
   onMultiSelect: () => void = () => {
   };
   onSettings: () => void = () => {
@@ -42,6 +41,8 @@ export struct MenuDialog {
         .fontSize(14)
         .type(ButtonType.Normal)
         .width('100%')
+        .enabled(!this.pinned)
+        .opacity(this.pinned ? 0.4 : 1)
         .onClick(() => {
           this.onClose();
           this.controller?.close();

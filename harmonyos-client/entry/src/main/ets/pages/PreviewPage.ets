@@ -5,11 +5,15 @@ import { FloatingWindowMgr } from '../window/FloatingWindowMgr';
 struct PreviewPage {
   @State path: string = '';
   @State type: string = 'image';
+  @State textContent: string = '';
+  @State fileName: string = '';
   private videoController: VideoController = new VideoController();
 
   aboutToAppear(): void {
     this.path = AppStorage.get<string>('previewPath') ?? '';
     this.type = AppStorage.get<string>('previewType') ?? 'image';
+    this.textContent = AppStorage.get<string>('previewText') ?? '';
+    this.fileName = AppStorage.get<string>('previewName') ?? '';
   }
 
   private close(): void {
@@ -30,6 +34,32 @@ struct PreviewPage {
           .autoPlay(true)
           .controls(true)
           .objectFit(ImageFit.Contain)
+      } else if (this.type === 'text') {
+        // 文本预览
+        Column() {
+          Text(this.fileName)
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Color.White)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+            .padding({ left: 16, right: 16, top: 12, bottom: 8 })
+          Scroll() {
+            Text(this.textContent)
+              .fontSize(12)
+              .fontColor('#E8EAF0')
+              .fontFamily('monospace')
+              .textAlign(TextAlign.Start)
+              .width('100%')
+              .padding(12)
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .scrollBar(BarState.Auto)
+        }
+        .width('100%')
+        .height('100%')
       } else {
         Image(this.path)
           .width('100%')
@@ -53,7 +83,7 @@ struct PreviewPage {
           this.close();
         })
 
-      if (this.type !== 'video') {
+      if (this.type === 'image') {
         Text('点击任意位置关闭预览')
           .fontSize(12)
           .fontColor('#CCCCCC')

@@ -13,6 +13,7 @@ std::string Pairing::buildRequest(const PairRequest& req) {
   v.set("publicKey", req.publicKey);
   v.set("ip", req.ip);
   v.set("tcpPort", static_cast<int64_t>(req.tcpPort));
+  v.set("nonce", req.nonce);
   return v.dump();
 }
 
@@ -25,12 +26,13 @@ bool Pairing::parseRequest(const std::string& jsonText, PairRequest& out) {
   out.publicKey = v["publicKey"].asString();
   out.ip = v["ip"].asString();
   out.tcpPort = static_cast<uint16_t>(v["tcpPort"].asInt(0));
+  out.nonce = v["nonce"].asString();
   return !out.deviceId.empty();
 }
 
 std::string Pairing::buildAccept(const std::string& targetDeviceId, const std::string& publicKeyPem,
                                  const std::string& aesKeyEncryptedBase64, const std::string& deviceName,
-                                 const std::string& deviceType, uint16_t tcpPort) {
+                                 const std::string& deviceType, uint16_t tcpPort, const std::string& nonce) {
   json::Value v = json::Value::object();
   v.set("cmd", "pairAccept");
   v.set("targetDeviceId", targetDeviceId);
@@ -39,6 +41,7 @@ std::string Pairing::buildAccept(const std::string& targetDeviceId, const std::s
   v.set("deviceName", deviceName);
   v.set("deviceType", deviceType);
   v.set("tcpPort", static_cast<int64_t>(tcpPort));
+  v.set("nonce", nonce);
   return v.dump();
 }
 

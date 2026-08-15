@@ -48,9 +48,11 @@ struct TransferProgress {
 
 struct Settings {
   bool floatWindowLocked = false;
+  bool pinned = false;      // keep the floating window expanded (no auto-hide)
   int autoCollapseMs = 5000;
   int cacheExpireHours = 0;
   int64_t maxTransferRateBps = 0;
+  std::string cacheDir;   // staging dir for received files; empty = <dataDir>/cache
 };
 
 LOCALSEND_API std::string deviceTypeToString(DeviceType t);

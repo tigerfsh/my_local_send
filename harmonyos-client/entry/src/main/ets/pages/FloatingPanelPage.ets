@@ -1,4 +1,4 @@
-import { CustomDialogController } from '@kit.ArkUI';
+import { promptAction } from '@kit.ArkUI';
 import { picker, fileIo } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
 import { FloatingWindowMgr } from '../window/FloatingWindowMgr';
@@ -15,6 +15,7 @@ struct FloatingPanelPage {
   @State files: FileInfo[] = [];
   @State multiSelect: boolean = false;
   @State selectedIds: string[] = [];
+  @StorageLink('pinned') pinned: boolean = false;
   @StorageLink('filesTick') @Watch('onFilesTick') filesTick: number = 0;
 
   private menuDialogController: CustomDialogController = new CustomDialogController({
@@ -40,9 +41,10 @@ struct FloatingPanelPage {
 
   aboutToAppear(): void {
     this.refreshFiles();
-    // 5 秒无操作自动回收至收缩态
+    this.pinned = LocalSendBridge.getPinned();
+    // 5 秒无操作自动回收至收缩态（钉住时不回收）
     setTimeout(() => {
-      if (!this.multiSelect) {
+      if (!this.pinned && !this.multiSelect) {
         FloatingWindowMgr.showBar();
       }
     }, 5000);
@@ -77,6 +79,11 @@ struct FloatingPanelPage {
       });
       this.selectedIds = keep;
     }
+  }
+
+  private togglePinned(): void {
+    this.pinned = !this.pinned;
+    LocalSendBridge.setPinned(this.pinned);
   }
 
   private toggleSelect(fileId: string): void {
@@ -145,15 +152,34 @@ struct FloatingPanelPage {
     FloatingWindowMgr.showPreview();
   }
 
+  // 文档/其它文件：文本走内置预览，非文本给出提示（可用 filePreview 接入系统预览）
+  private openFile(path: string, fileName: string): void {
+    const text = LocalSendBridge.readTextFile(path);
+    if (text.length > 0) {
+      AppStorage.setOrCreate<string>('previewText', text);
+      AppStorage.setOrCreate<string>('previewName', fileName);
+      this.previewFile(path, 'text');
+      return;
+    }
+    promptAction.showToast({ message: '该文件类型暂不支持预览，请在文件管理器中查看' });
+  }
+
   build() {
     Column() {
-      // 标题栏
+      // 标题栏：钉住 + ⋮
       Row() {
         Text('中转站')
           .fontSize(14)
           .fontWeight(FontWeight.Bold)
           .fontColor('#2B3A67')
         Blank()
+        Button(this.pinned ? '📌' : '📍')
+          .fontSize(14)
+          .type(ButtonType.Normal)
+          .opacity(this.pinned ? 1 : 0.4)
+          .onClick(() => {
+            this.togglePinned();
+          })
         Button('⋮')
           .fontSize(14)
           .type(ButtonType.Normal)
@@ -178,6 +204,9 @@ struct FloatingPanelPage {
               },
               onPreview: (path: string, type: string) => {
                 this.previewFile(path, type);
+              },
+              onOpen: (path: string, fileName: string) => {
+                this.openFile(path, fileName);
               },
               onDelete: (fileId: string) => {
                 this.deleteFile(fileId);

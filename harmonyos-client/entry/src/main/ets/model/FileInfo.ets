@@ -17,7 +17,7 @@ export class FileInfo {
   expireTime: string = '';
   isLocal: boolean = true;
 
-  static fromJson(json: Record<string, Object>): FileInfo {
+  static fromJson(json: Record<string, string | number | boolean>): FileInfo {
     let fi = new FileInfo();
     fi.fileId = String(json['fileId'] ?? '');
     fi.fileName = String(json['fileName'] ?? '');

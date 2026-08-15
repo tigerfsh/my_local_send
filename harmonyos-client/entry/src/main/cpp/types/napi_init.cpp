@@ -17,6 +17,11 @@ static napi_value Init(napi_env env, napi_value exports) {
       {"getDevicesJson", nullptr, lsbridge::GetDevicesJson, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"getSettingsJson", nullptr, lsbridge::GetSettingsJson, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"saveSettingsJson", nullptr, lsbridge::SaveSettingsJson, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"getPinned", nullptr, lsbridge::GetPinned, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"setPinned", nullptr, lsbridge::SetPinned, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"getCacheDir", nullptr, lsbridge::GetCacheDir, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"setCacheDir", nullptr, lsbridge::SetCacheDir, nullptr, nullptr, nullptr, napi_default, nullptr},
+      {"readTextFile", nullptr, lsbridge::ReadTextFile, nullptr, nullptr, nullptr, napi_default, nullptr},
       {"rescan", nullptr, lsbridge::Rescan, nullptr, nullptr, nullptr, napi_default, nullptr},
   };
   napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);

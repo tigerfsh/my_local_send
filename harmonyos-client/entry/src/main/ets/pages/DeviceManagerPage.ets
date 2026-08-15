@@ -2,12 +2,13 @@ import { FloatingWindowMgr } from '../window/FloatingWindowMgr';
 import { LocalSendBridge } from '../napi/localsend_bridge';
 import { DeviceInfo } from '../model/DeviceInfo';
 
+/**
+ * 设备管理：自动扫描同一局域网设备，手动选择配对（无手动输 IP）。
+ */
 @Entry
 @Component
 struct DeviceManagerPage {
   @State devices: DeviceInfo[] = [];
-  @State ipInput: string = '';
-  @State portInput: string = '53318';
   @StorageLink('devicesTick') @Watch('onDevicesTick') devicesTick: number = 0;
 
   aboutToAppear(): void {
@@ -20,18 +21,6 @@ struct DeviceManagerPage {
 
   private refresh(): void {
     this.devices = LocalSendBridge.getDevices();
-  }
-
-  private connectByIp(): void {
-    if (this.ipInput.trim() === '') {
-      return;
-    }
-    const port = parseInt(this.portInput);
-    if (Number.isNaN(port)) {
-      return;
-    }
-    LocalSendBridge.connectByIp(this.ipInput.trim(), port);
-    this.refresh();
   }
 
   build() {
@@ -51,6 +40,21 @@ struct DeviceManagerPage {
       }
       .width('100%')
       .padding({ left: 12, right: 6 })
+
+      Text('同一局域网的设备会自动出现在下方')
+        .fontSize(11)
+        .fontColor('#8A93A6')
+        .width('100%')
+        .padding({ left: 12, right: 12 })
+
+      if (this.devices.length === 0) {
+        Text('正在扫描局域网设备…')
+          .fontSize(12)
+          .fontColor('#8A93A6')
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .margin({ top: 40 })
+      }
 
       List({ space: 4 }) {
         ForEach(this.devices, (d: DeviceInfo) => {
@@ -98,32 +102,8 @@ struct DeviceManagerPage {
         }, (d: DeviceInfo) => d.deviceId)
       }
       .width('100%')
-      .height(300)
+      .layoutWeight(1)
       .scrollBar(BarState.Auto)
-
-      Row({ space: 8 }) {
-        TextInput({ text: this.ipInput, placeholder: '设备 IP' })
-          .width(120)
-          .height(32)
-          .onChange((v: string) => {
-            this.ipInput = v;
-          })
-        TextInput({ text: this.portInput, placeholder: '端口' })
-          .width(80)
-          .height(32)
-          .type(InputType.Number)
-          .onChange((v: string) => {
-            this.portInput = v;
-          })
-        Button('手动连接')
-          .fontSize(12)
-          .type(ButtonType.Normal)
-          .onClick(() => {
-            this.connectByIp();
-          })
-      }
-      .width('100%')
-      .padding({ left: 12, right: 12 })
 
       Button('重新扫描')
         .fontSize(13)
@@ -136,6 +116,6 @@ struct DeviceManagerPage {
     .width('100%')
     .height('100%')
     .backgroundColor('#F7F8FA')
-    .padding({ top: 12 })
+    .padding({ top: 12, bottom: 12 })
   }
 }

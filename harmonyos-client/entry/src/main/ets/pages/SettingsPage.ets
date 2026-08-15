@@ -15,6 +15,7 @@ struct SettingsPage {
   @State floatWindowLocked: boolean = false;
   @State cacheExpireHours: number = 0;
   @State maxRateKB: number = 0;
+  @State cacheDir: string = '';
 
   aboutToAppear(): void {
     let raw = LocalSendBridge.getSettingsJson();
@@ -23,6 +24,7 @@ struct SettingsPage {
     this.floatWindowLocked = data.floatWindowLocked;
     this.cacheExpireHours = data.cacheExpireHours;
     this.maxRateKB = Math.floor(data.maxTransferRateBps / 1024);
+    this.cacheDir = LocalSendBridge.getCacheDir();
   }
 
   private save(): void {
@@ -57,6 +59,19 @@ struct SettingsPage {
       }
       .width('100%')
       .padding({ left: 12, right: 6 })
+
+      Row() {
+        Text('暂存目录').fontSize(14)
+        Blank()
+        Text(this.cacheDir)
+          .fontSize(11)
+          .fontColor('#8A93A6')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width(180)
+      }
+      .width('100%')
+      .padding({ left: 12, right: 12 })
 
       Row() {
         Text('自动收起时长(毫秒)').fontSize(14)

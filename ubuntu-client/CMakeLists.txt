@@ -17,14 +17,21 @@ qt_add_qml_module(localsend-ubuntu
   QML_FILES
     qml/Main.qml
     qml/CollapsedBar.qml
+    qml/DeckBar.qml
     qml/ExpandedPanel.qml
     qml/FileListItem.qml
     qml/ImagePreview.qml
     qml/VideoPreview.qml
+    qml/TextPreview.qml
     qml/SettingsDialog.qml
     qml/DeviceManagerDialog.qml
     qml/PairConfirmDialog.qml
     qml/Toast.qml
+)
+
+qt_add_resources(localsend-ubuntu "icons"
+    PREFIX "/"
+    FILES icons/portal.png
 )
 
 target_link_libraries(localsend-ubuntu PRIVATE

@@ -115,6 +115,33 @@ bool Crypto::rsaDecrypt(const std::string& privatePem, const std::vector<uint8_t
   return true;
 }
 
+bool Crypto::rsaSign(const std::string& privatePem, const std::vector<uint8_t>& data, std::vector<uint8_t>& sig) {
+  EVP_PKEY* keyRaw = nullptr;
+  if (!pemToKey(privatePem, false, &keyRaw)) return false;
+  EvpKeyPtr key(keyRaw);
+
+  MdCtxPtr mctx(EVP_MD_CTX_new());
+  if (!mctx) return false;
+  if (EVP_DigestSignInit(mctx.get(), nullptr, EVP_sha256(), nullptr, key.get()) != 1) return false;
+  size_t sigLen = 0;
+  if (EVP_DigestSign(mctx.get(), nullptr, &sigLen, data.data(), data.size()) != 1) return false;
+  sig.resize(sigLen);
+  if (EVP_DigestSign(mctx.get(), sig.data(), &sigLen, data.data(), data.size()) != 1) return false;
+  sig.resize(sigLen);
+  return true;
+}
+
+bool Crypto::rsaVerify(const std::string& publicPem, const std::vector<uint8_t>& data, const std::vector<uint8_t>& sig) {
+  EVP_PKEY* keyRaw = nullptr;
+  if (!pemToKey(publicPem, true, &keyRaw)) return false;
+  EvpKeyPtr key(keyRaw);
+
+  MdCtxPtr mctx(EVP_MD_CTX_new());
+  if (!mctx) return false;
+  if (EVP_DigestVerifyInit(mctx.get(), nullptr, EVP_sha256(), nullptr, key.get()) != 1) return false;
+  return EVP_DigestVerify(mctx.get(), sig.data(), sig.size(), data.data(), data.size()) == 1;
+}
+
 void Crypto::generateAesKey(std::vector<uint8_t>& key, size_t len) {
   key.resize(len);
   RAND_bytes(key.data(), static_cast<int>(len));

@@ -1,8 +1,26 @@
 #include "bridge_common.h"
 
+#include "json.hpp"
 #include "localsend/localsend.h"
 
 namespace lsbridge {
+
+namespace {
+
+std::string makeEvent(const std::string& name) {
+  localsend::json::Value v = localsend::json::Value::object();
+  v.set("event", name);
+  return v.dump();
+}
+
+std::string makeEventWith(const std::string& name, const std::string& key, const std::string& value) {
+  localsend::json::Value v = localsend::json::Value::object();
+  v.set("event", name);
+  v.set(key, value);
+  return v.dump();
+}
+
+} // namespace
 
 napi_value Start(napi_env env, napi_callback_info info) {
   size_t argc = 3;
@@ -103,34 +121,48 @@ napi_value OnEvent(napi_env env, napi_callback_info info) {
 
   localsend::Callbacks cb;
   cb.onFileAdded = [](const localsend::FileInfo& f) {
-    PostEvent("{\"event\":\"fileAdded\",\"fileId\":\"" + f.fileId + "\",\"fileName\":\"" + f.fileName + "\"}");
+    localsend::json::Value v = localsend::json::Value::object();
+    v.set("event", "fileAdded");
+    v.set("fileId", f.fileId);
+    v.set("fileName", f.fileName);
+    PostEvent(v.dump());
   };
   cb.onFileRemoved = [](const localsend::FileInfo& f) {
-    PostEvent("{\"event\":\"fileRemoved\",\"fileId\":\"" + f.fileId + "\"}");
+    PostEvent(makeEventWith("fileRemoved", "fileId", f.fileId));
   };
   cb.onPairRequest = [](const localsend::Device& d) {
-    PostEvent("{\"event\":\"pairRequest\",\"deviceId\":\"" + d.deviceId +
-              "\",\"deviceName\":\"" + d.deviceName + "\"}");
+    localsend::json::Value v = localsend::json::Value::object();
+    v.set("event", "pairRequest");
+    v.set("deviceId", d.deviceId);
+    v.set("deviceName", d.deviceName);
+    PostEvent(v.dump());
   };
   cb.onPairResult = [](const localsend::Device& d, bool accepted) {
-    PostEvent("{\"event\":\"pairResult\",\"deviceId\":\"" + d.deviceId +
-              "\",\"accepted\":" + std::string(accepted ? "true" : "false") + "}");
+    localsend::json::Value v = localsend::json::Value::object();
+    v.set("event", "pairResult");
+    v.set("deviceId", d.deviceId);
+    v.set("accepted", accepted);
+    PostEvent(v.dump());
   };
   cb.onDeviceFound = [](const localsend::Device&) {
-    PostEvent("{\"event\":\"devicesChanged\"}");
+    PostEvent(makeEvent("devicesChanged"));
   };
   cb.onDeviceOnline = [](const localsend::Device&) {
-    PostEvent("{\"event\":\"devicesChanged\"}");
+    PostEvent(makeEvent("devicesChanged"));
   };
   cb.onDeviceOffline = [](const localsend::Device&) {
-    PostEvent("{\"event\":\"devicesChanged\"}");
+    PostEvent(makeEvent("devicesChanged"));
   };
   cb.onTransferFinished = [](const std::string& fileId, const std::string& fileName, bool ok) {
-    PostEvent("{\"event\":\"transferFinished\",\"fileId\":\"" + fileId +
-              "\",\"fileName\":\"" + fileName + "\",\"ok\":" + std::string(ok ? "true" : "false") + "}");
+    localsend::json::Value v = localsend::json::Value::object();
+    v.set("event", "transferFinished");
+    v.set("fileId", fileId);
+    v.set("fileName", fileName);
+    v.set("ok", ok);
+    PostEvent(v.dump());
   };
   cb.onError = [](const std::string& message) {
-    PostEvent("{\"event\":\"error\",\"message\":\"" + message + "\"}");
+    PostEvent(makeEventWith("error", "message", message));
   };
   localsend::Core::instance().setCallbacks(cb);
   return MakeBool(env, true);
